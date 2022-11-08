@@ -1,0 +1,11 @@
+sudo su
+curl -fsSL https://www.phidgets.com/downloads/setup_linux | bash -
+
+sudo apt install libphidget22
+sudo apt install libphidget22-dev
+sudo apt install libphidget22extra
+sudo apt install phidget22networkserver
+sudo apt install phidget22admin
+
+g++ woabot.cpp -o woabot -lphidget22
+./woabot
