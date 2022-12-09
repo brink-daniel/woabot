@@ -9,3 +9,6 @@ sudo apt install phidget22admin
 
 g++ woabot.cpp -o woabot -lphidget22
 ./woabot
+
+scp /home/daniel/Documents/Woabot/woabot.cpp daniel@192.168.1.113:/home/daniel/Documents/Woabot/woabot.cpp
+scp /home/daniel/Documents/Woabot/xbox360.h daniel@192.168.1.113:/home/daniel/Documents/Woabot/xbox360.h

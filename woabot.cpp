@@ -1,319 +1,211 @@
 #include <fcntl.h>
-#include <stdio.h>
-#include <unistd.h>
-#include <linux/joystick.h>
-#include <string>
 #include <phidget22.h>
-#include <linux/reboot.h>
 #include <iostream>
+#include <chrono>
+#include <thread>
+#include <signal.h>
+#include <fstream>
+#include <iomanip>
+#include "xbox360.h"
 
-enum button
-{
-	// afterburner
-	A = 0,
-	// boost
-	B = 1,
-	// decrease acceleration
-	X = 2,
-	// increase acceleration
-	Y = 3,
-	// left brake
-	LB = 4,
-	// right brake
-	RB = 5,
-	// back
-	Back = 6,
-	// start
-	Start = 7,
-	// spin left
-	Left = 11,
-	// spin right
-	Right = 12,
-	// forward
-	Up = 13,
-	// reverse
-	Down = 14
-};
-
-enum axis
-{
-	// power balance left vs right
-	LS_X = 0,
-	// power balance forward vs reverse
-	LS_Y = 1,
-	// reverse power
-	LT = 2,
-	// calibrate power balance left vs right
-	RS_X = 3,
-	// calibrate power balance forward vs reverse
-	RS_Y = 4,
-	// forward power
-	RT = 5,
-	// not used (fires on button Left/Right)
-	D_X = 6,
-	// not used (fires on button Up/Down)
-	D_Y = 7
-};
-
-constexpr float event_offset = 32767;
-constexpr float dead_zone = 10;
-
-int left_power = 100;
-int right_power = 100;
-
-int left_power_calibrate = 0;
-int right_power_calibrate = 0;
-
-int throttle_forward = 0;
-int throttle_reverse = 0;
+constexpr int max_power = 100;
+int left_power = max_power;
+int right_power = max_power;
+int forward_power = 0;
+int reverse_power = 0;
 int throttle = 0;
+bool terminate = false;
 
-// PhidgetDCMotorHandle motor_left;
-// PhidgetDCMotorHandle motor_right;
+std::ofstream log_file("woabot.log");
 
-int read_event(int fd, struct js_event *event)
+PhidgetDCMotorHandle motor_left;
+PhidgetDCMotorHandle motor_right;
+
+void Log(std::string info, bool error)
 {
-	ssize_t bytes;
-	bytes = read(fd, event, sizeof(*event));
-
-	if (bytes == sizeof(*event))
+	auto t = std::time(nullptr);
+	auto tm = *std::localtime(&t);
+	std::ostringstream oss;
+	std::string err = ": ";
+	if (error)
 	{
-		return 0;
+		err = ": ERROR - ";
 	}
-	return -1;
+	oss << std::put_time(&tm, "%Y-%m-%d %H-%M-%S") << err << info << std::endl;	
+	auto line = oss.str();
+	log_file << line;
+	std::cout << line;
 }
 
-const int axis_value(int event_number, int event_value)
+void SignalHandler(int s)
 {
-	switch (event_number)
-	{
-	case 0: // LS X
-	case 1: // LS Y
-	case 3: // RS X
-	case 4: // RS Y
-	case 6: // D X
-	case 7: // D Y
-		return event_value / event_offset * 100;
-	case 2: // LT
-	case 5: // RT
-		return (event_value + event_offset) / (event_offset * 2) * 100;
-	default:
-		return 0;
-	}
-}
-
-const int axis_deadzone(int event_number, int event_value)
-{
-	switch (event_number)
-	{
-	case 0: // LS X
-	case 1: // LS Y
-	case 3: // RS X
-	case 4: // RS Y
-		if (abs(event_value) <= dead_zone)
-		{
-			return 0;
-		}
-		else if (event_value > dead_zone)
-		{
-			return (event_value - dead_zone) / (100 - dead_zone) * 100;
-		}
-		else if (event_value < -dead_zone)
-		{
-			return (event_value + dead_zone) / (100 - dead_zone) * 100;
-		}
-		break;
-	}
-	return event_value;
-}
-
-void Afterburner(signed short value)
-{
-	std::cout << "afterburner" << '\n';
-}
-
-void Boost(signed short value)
-{
-	std::cout << "boost" << '\n';
-}
-
-void SpinToLeft(signed short value)
-{
-	if (value == 1)
-	{
-		left_power = -100;
-		right_power = 100;
-	}
-	else
-	{
-		left_power = 100;
-		right_power = 100;
-	}
-	std::cout << "Spin Left" << left_power << " Right" << right_power << '\n';
-}
-
-void SpinToRight(signed short value)
-{
-	if (value == 1)
-	{
-		left_power = 100;
-		right_power = -100;
-	}
-	else
-	{
-		left_power = 100;
-		right_power = 100;
-	}
-	std::cout << "Spin Left" << left_power << " Right" << right_power << '\n';
+	Log("Caught signal. Terminating...", true);
+	terminate = true;
 }
 
 void PowerBalance(signed short value)
 {
+	if (value == 0)
+	{
+		left_power = max_power;
+		right_power = max_power;
+		return;
+	}
+
 	if (value > 0)
 	{
-		left_power = 100 + abs(value);
-		right_power = 100 - abs(value);
+		left_power = max_power;
+		if (value >= max_power)
+		{
+			right_power = 0 - max_power;
+		}
+		else
+		{
+			right_power = max_power - abs(value);
+		}
 	}
 	else
 	{
-		left_power = 100 - abs(value);
-		right_power = 100 + abs(value);
+		if (abs(value) >= max_power)
+		{
+			left_power = 0 - max_power;
+		}
+		else
+		{
+			left_power = max_power - abs(value);
+		}
+		right_power = max_power;
 	}
-
-	std::cout << "Left" << left_power << " Right" << right_power << '\n';
 }
 
-void CalibratePowerBalance(signed short value)
+void UpdateThrottle()
 {
-	if (value == 100 || value == -100)
+	if (!terminate)
 	{
-		if (value == -100)
-		{
-			right_power_calibrate += 1;
-			left_power_calibrate -= 1;
-		}
-		else if (value == 100)
-		{
-			right_power_calibrate -= 1;
-			left_power_calibrate += 1;
-		}
-		std::cout << "CalibratePowerBalance "
-				  << "Left" << left_power_calibrate << " Right" << right_power_calibrate << '\n';
+		throttle = forward_power - reverse_power;
+		return;
 	}
-}
-
-void ResetPowerBalanceCalibration()
-{
-	right_power_calibrate = 0;
-	left_power_calibrate = 0;
-	std::cout << "ResetPowerBalanceCalibration "
-			  << "Left" << left_power_calibrate << " Right" << right_power_calibrate << '\n';
-}
-
-void DecreaseAccl(signed short value)
-{
-	std::cout << "decrease accelleration" << '\n';
-}
-
-void IncreaseAccl(signed short value)
-{
-	std::cout << "increase accelleration" << '\n';
-}
-
-void ResetAccl()
-{
-	std::cout << "reset accelleration" << '\n';
+	throttle = 0;
 }
 
 void ThrottleForward(signed short value)
 {
-	throttle_forward = value;
-	throttle = throttle_forward - throttle_reverse;
-
-	std::cout << "forward"<<  throttle_forward  << " throttle" <<  throttle << '\n';
+	forward_power = value;
+	UpdateThrottle();
 }
 
 void ThrottleReverse(signed short value)
 {
-	throttle_reverse = value;
-	throttle = throttle_forward - throttle_reverse;
-
-	std::cout << "reverse"<<  throttle_reverse  << " throttle" <<  throttle << '\n';
+	reverse_power = value;
+	UpdateThrottle();
 }
 
-void ProcessButtonEvent(unsigned char event_number, signed short event_value)
+double MinMaxVelocity(double value)
 {
-	auto b = static_cast<button>(event_number);
-	switch (b)
+	if (value > 1)
 	{
-	case A:
-		Afterburner(event_value);
-		break;
-	case B:
-		Boost(event_value);
-		break;
-	case X:
-		DecreaseAccl(event_value);
-		break;
-	case Y:
-		IncreaseAccl(event_value);
-		break;
-	case LB:
-		break;
-	case RB:
-		break;
-	case Left:
-		SpinToLeft(event_value);
-		break;
-	case Right:
-		SpinToRight(event_value);
-		break;
-	case Up:
-		break;
-	case Down:
-		break;
-	case Back:
-		ResetPowerBalanceCalibration();
-		break;
-	case Start:
-		ResetAccl();
-		break;
+		Log("Invalid velocity", true);
+		return 1;
+	}
+	if (value < -1)
+	{
+		Log("Invalid velocity", true);
+		return -1;
+	}
+	return value;
+}
+
+void SignalMotor()
+{
+	double left_velocity = (throttle / max_power) * (left_power / max_power);
+	left_velocity = MinMaxVelocity(left_velocity);
+	auto res1 = PhidgetDCMotor_setTargetVelocity(motor_left, left_velocity);
+	if (res1 != EPHIDGET_OK)
+	{
+		Log("Left target velocity not set", true);
+	}
+
+	double right_velocity = (throttle / max_power) * (right_power / max_power);
+	right_velocity = MinMaxVelocity(right_velocity);
+	auto res2 = PhidgetDCMotor_setTargetVelocity(motor_right, right_velocity);
+	if (res2 != EPHIDGET_OK)
+	{
+		Log("Right target velocity not set", true);
 	}
 }
 
 void ProcessAxisEvent(unsigned char event_number, signed short event_value)
 {
 	auto a = static_cast<axis>(event_number);
-	auto v = axis_value(event_number, event_value);
-	auto p = axis_deadzone(event_number, v);
+	auto v = axis_value(a, event_value);
+	auto p = axis_deadzone_filter(a, v);
+
 	switch (a)
 	{
-	case LS_X:
+	case LeftStick_X:
 		PowerBalance(p);
 		break;
-	case LS_Y:
+	case LeftStick_Y:
 		break;
-	case RT:
+	case RightTrigger:
 		ThrottleForward(p);
 		break;
-	case LT:
+	case LeftTrigger:
 		ThrottleReverse(p);
 		break;
-	case RS_X:
-		CalibratePowerBalance(p);
-	case RS_Y:
+	case RightStick_X:
 		break;
-	case D_X:
+	case RightStick_Y:
 		break;
-	case D_Y:
+	case DPad_X:
+		break;
+	case DPad_Y:
 		break;
 	}
+	SignalMotor();
 }
-
-
 
 int main(int argc, char *argv[])
 {
+	Log("Woabot started", false);
+
+	// catch ctrl+c
+	struct sigaction sigIntHandler;
+	sigIntHandler.sa_handler = SignalHandler;
+	sigemptyset(&sigIntHandler.sa_mask);
+	sigIntHandler.sa_flags = 0;
+	sigaction(SIGINT, &sigIntHandler, NULL);
+
+	Log("Pausing 10 seconds for OS hardware detection...", false);
+	using namespace std::chrono_literals;
+	std::this_thread::sleep_for(10s);
+
+	// init HC MotorController
+	PhidgetDCMotor_create(&motor_left);
+	PhidgetDCMotor_create(&motor_right);
+	Phidget_setChannel((PhidgetHandle)motor_left, 0);
+	Phidget_setChannel((PhidgetHandle)motor_right, 1);
+	auto res1 = Phidget_openWaitForAttachment((PhidgetHandle)motor_left, 5000);
+	auto res2 = Phidget_openWaitForAttachment((PhidgetHandle)motor_right, 5000);
+
+	if (res1 != EPHIDGET_OK || res2 != EPHIDGET_OK)
+	{
+		Log("Motor controller not connected", true);
+		return 1;
+	}
+	Log("Motor controller connected", false);
+
+	res1 = PhidgetDCMotor_setAcceleration(motor_left, 1);
+	res2 = PhidgetDCMotor_setAcceleration(motor_right, 1);
+	if (res1 != EPHIDGET_OK || res2 != EPHIDGET_OK)
+	{
+		Log("Default acceleration not set", true);
+		return 1;
+	}
+	Log("Default acceleration set", false);
+
+
+
 	// init xbox360 controller
 	int js;
 	struct js_event event;
@@ -321,32 +213,16 @@ int main(int argc, char *argv[])
 
 	if (js == -1)
 	{
-		perror("Could not open joystick");
+		Log("XBox360 controller not connected", true);
 		return 1;
 	}
+	Log("XBox360 controller connected", false);
 
-	// init HC MotorController
-	// PhidgetDCMotor_create(&motor_left);
-	// PhidgetDCMotor_create(&motor_right);
-	// Phidget_setChannel((PhidgetHandle)motor_left, 0);
-	// Phidget_setChannel((PhidgetHandle)motor_right, 1);
-	// auto res1 = Phidget_openWaitForAttachment((PhidgetHandle)motor_left, 5000);
-	// auto res2 = Phidget_openWaitForAttachment((PhidgetHandle)motor_right, 5000);
-
-	// if (res1 != EPHIDGET_OK || res2 != EPHIDGET_OK )
-	//{
-	//	perror("Motorcontroller not connected");
-	//	return 1;
-	// }
-
-	// listen for controller inputs
-	while (read_event(js, &event) == 0)
+	Log("Listening for controller inputs...", false);
+	while (read_event(js, &event) == 0 && !terminate)
 	{
 		switch (event.type)
 		{
-		case JS_EVENT_BUTTON:
-			ProcessButtonEvent(event.number, event.value);
-			break;
 		case JS_EVENT_AXIS:
 			ProcessAxisEvent(event.number, event.value);
 			break;
@@ -355,13 +231,37 @@ int main(int argc, char *argv[])
 		}
 	}
 
+	res1 = PhidgetDCMotor_setTargetVelocity(motor_left, 0);
+	res2 = PhidgetDCMotor_setTargetVelocity(motor_right, 0);
+	if (res1 != EPHIDGET_OK || res2 != EPHIDGET_OK)
+	{
+		Log("Velocity not set to 0", true);
+		return 1;
+	}
+	Log("Velocity set to 0", false);
+
+	res1 = Phidget_close((PhidgetHandle)motor_left);
+	res2 = Phidget_close((PhidgetHandle)motor_right);
+	if (res1 != EPHIDGET_OK || res2 != EPHIDGET_OK)
+	{
+		Log("Motor connection not closed", true);
+		return 1;
+	}
+	Log("Motor connection closed", false);
+
+	res1 = PhidgetDCMotor_delete(&motor_left);
+	res2 = PhidgetDCMotor_delete(&motor_right);
+	if (res1 != EPHIDGET_OK || res2 != EPHIDGET_OK)
+	{
+		Log("Motor connection not deleted", true);
+		return 1;
+	}
+	Log("Motor connection deleted", false);
+
 	close(js);
 
-	// Phidget_close((PhidgetHandle)motor_left);
-	// Phidget_close((PhidgetHandle)motor_right);
-
-	// PhidgetDCMotor_delete(&motor_left);
-	// PhidgetDCMotor_delete(&motor_right);
+	Log("End", false);
+	log_file.close();
 
 	return 0;
 }
