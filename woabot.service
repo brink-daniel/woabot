@@ -1,0 +1,9 @@
+[Unit]
+Description=Woabot
+After=multi-user.target
+
+[Service]
+ExecStart=/home/daniel/Documents/Woabot/woabot
+
+[Install]
+WantedBy=multi-user.target

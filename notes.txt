@@ -7,8 +7,11 @@ sudo apt install libphidget22extra
 sudo apt install phidget22networkserver
 sudo apt install phidget22admin
 
-g++ woabot.cpp -o woabot -lphidget22
-./woabot
+scp /home/daniel/Documents/Woabot/woabot.cpp daniel@robot.local:/home/daniel/Documents/Woabot/woabot.cpp
+scp /home/daniel/Documents/Woabot/xbox360.h daniel@robot.local:/home/daniel/Documents/Woabot/xbox360.h
+scp /home/daniel/Documents/Woabot/woabot.service daniel@robot.local:/lib/systemd/system/woabot.service
 
-scp /home/daniel/Documents/Woabot/woabot.cpp daniel@192.168.1.113:/home/daniel/Documents/Woabot/woabot.cpp
-scp /home/daniel/Documents/Woabot/xbox360.h daniel@192.168.1.113:/home/daniel/Documents/Woabot/xbox360.h
+g++ woabot.cpp -o woabot -lphidget22
+
+sudo systemctl daemon-reload
+sudo systemctl enable woabot.service

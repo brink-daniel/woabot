@@ -37,9 +37,19 @@ void Log(std::string info, bool error)
 	std::cout << line;
 }
 
+void Log(std::string info)
+{
+	Log(info, false);
+}
+
+void Error(std::string msg)
+{
+	Log(msg, true);
+}
+
 void SignalHandler(int s)
 {
-	Log("Caught signal. Terminating...", true);
+	Log("Caught signal. Terminating...");
 	terminate = true;
 }
 
@@ -104,12 +114,12 @@ double MinMaxVelocity(double value)
 {
 	if (value > 1)
 	{
-		Log("Invalid velocity", true);
+		Error("Invalid velocity");
 		return 1;
 	}
 	if (value < -1)
 	{
-		Log("Invalid velocity", true);
+		Error("Invalid velocity");
 		return -1;
 	}
 	return value;
@@ -122,7 +132,7 @@ void SignalMotor()
 	auto res1 = PhidgetDCMotor_setTargetVelocity(motor_left, left_velocity);
 	if (res1 != EPHIDGET_OK)
 	{
-		Log("Left target velocity not set", true);
+		Error("Left target velocity not set");
 	}
 
 	double right_velocity = (throttle / max_power) * (right_power / max_power);
@@ -130,7 +140,7 @@ void SignalMotor()
 	auto res2 = PhidgetDCMotor_setTargetVelocity(motor_right, right_velocity);
 	if (res2 != EPHIDGET_OK)
 	{
-		Log("Right target velocity not set", true);
+		Error("Right target velocity not set");
 	}
 }
 
@@ -167,7 +177,7 @@ void ProcessAxisEvent(unsigned char event_number, signed short event_value)
 
 int main(int argc, char *argv[])
 {
-	Log("Woabot started", false);
+	Log("Woabot started");
 
 	// catch ctrl+c
 	struct sigaction sigIntHandler;
@@ -176,49 +186,94 @@ int main(int argc, char *argv[])
 	sigIntHandler.sa_flags = 0;
 	sigaction(SIGINT, &sigIntHandler, NULL);
 
-	Log("Pausing 10 seconds for OS hardware detection...", false);
+	Log("Pausing 5 seconds for OS hardware detection...");
 	using namespace std::chrono_literals;
-	std::this_thread::sleep_for(10s);
+	std::this_thread::sleep_for(5s);
 
 	// init HC MotorController
 	PhidgetDCMotor_create(&motor_left);
 	PhidgetDCMotor_create(&motor_right);
 	Phidget_setChannel((PhidgetHandle)motor_left, 0);
 	Phidget_setChannel((PhidgetHandle)motor_right, 1);
-	auto res1 = Phidget_openWaitForAttachment((PhidgetHandle)motor_left, 5000);
-	auto res2 = Phidget_openWaitForAttachment((PhidgetHandle)motor_right, 5000);
+	PhidgetReturnCode res1;
+	PhidgetReturnCode res2;
 
-	if (res1 != EPHIDGET_OK || res2 != EPHIDGET_OK)
+	do
 	{
-		Log("Motor controller not connected", true);
-		return 1;
+		res1 = Phidget_openWaitForAttachment((PhidgetHandle)motor_left, 5000);
+		if (res1 != EPHIDGET_OK)
+		{
+			Error("Left motor controller not connected");
+			//std::this_thread::sleep_for(1s);
+		}
 	}
-	Log("Motor controller connected", false);
+	while (!terminate && res1 != EPHIDGET_OK);
+	Log("Left motor controller connected");
 
-	res1 = PhidgetDCMotor_setAcceleration(motor_left, 1);
-	res2 = PhidgetDCMotor_setAcceleration(motor_right, 1);
-	if (res1 != EPHIDGET_OK || res2 != EPHIDGET_OK)
+
+	do
 	{
-		Log("Default acceleration not set", true);
-		return 1;
+		res2 = Phidget_openWaitForAttachment((PhidgetHandle)motor_right, 5000);
+		if (res2 != EPHIDGET_OK)
+		{
+			Error("Right motor controller not connected");
+			//std::this_thread::sleep_for(1s);
+		}
 	}
-	Log("Default acceleration set", false);
+	while (!terminate && res2 != EPHIDGET_OK);
+	Log("Right motor controller connected");
+
+	
+
+	do
+	{
+		res1 = PhidgetDCMotor_setAcceleration(motor_left, 1);
+		if (res1 != EPHIDGET_OK)
+		{
+			Error("Left motor default acceleration not set");
+			std::this_thread::sleep_for(1s);
+		}
+	}
+	while (!terminate && res1 != EPHIDGET_OK);
+	Log("Left motor default acceleration set");
+
+
+	do
+	{
+		res2 = PhidgetDCMotor_setAcceleration(motor_right, 1);
+		if (res2 != EPHIDGET_OK)
+		{
+			Error("Right motor default acceleration not set");
+			std::this_thread::sleep_for(1s);
+		}
+	}
+	while (!terminate && res2 != EPHIDGET_OK);
+	Log("Right motor default acceleration set");
+
+	
+	
+	
 
 
 
 	// init xbox360 controller
-	int js;
+	int js = -1;
 	struct js_event event;
-	js = open("/dev/input/js0", O_RDONLY);
-
-	if (js == -1)
+	do
 	{
-		Log("XBox360 controller not connected", true);
-		return 1;
-	}
-	Log("XBox360 controller connected", false);
+		js = open("/dev/input/js0", O_RDONLY);
+		if (js == -1)
+		{
+			Error("XBox360 controller not connected");
+			std::this_thread::sleep_for(1s);
+		}
+	} while (!terminate && js == -1);		
+	Log("XBox360 controller connected");
 
-	Log("Listening for controller inputs...", false);
+
+	//Control loop
+
+	Log("Listening for controller inputs...");
 	while (read_event(js, &event) == 0 && !terminate)
 	{
 		switch (event.type)
@@ -231,36 +286,41 @@ int main(int argc, char *argv[])
 		}
 	}
 
+
+
+	//Shutdown start
+	Error("Stopped listening for controller inputs");
+
 	res1 = PhidgetDCMotor_setTargetVelocity(motor_left, 0);
 	res2 = PhidgetDCMotor_setTargetVelocity(motor_right, 0);
 	if (res1 != EPHIDGET_OK || res2 != EPHIDGET_OK)
 	{
-		Log("Velocity not set to 0", true);
+		Error("Velocity not set to 0");
 		return 1;
 	}
-	Log("Velocity set to 0", false);
+	Log("Velocity set to 0");
 
 	res1 = Phidget_close((PhidgetHandle)motor_left);
 	res2 = Phidget_close((PhidgetHandle)motor_right);
 	if (res1 != EPHIDGET_OK || res2 != EPHIDGET_OK)
 	{
-		Log("Motor connection not closed", true);
+		Error("Motor connection not closed");
 		return 1;
 	}
-	Log("Motor connection closed", false);
+	Log("Motor connection closed");
 
 	res1 = PhidgetDCMotor_delete(&motor_left);
 	res2 = PhidgetDCMotor_delete(&motor_right);
 	if (res1 != EPHIDGET_OK || res2 != EPHIDGET_OK)
 	{
-		Log("Motor connection not deleted", true);
+		Error("Motor connection not deleted");
 		return 1;
 	}
-	Log("Motor connection deleted", false);
+	Log("Motor connection deleted");
 
 	close(js);
 
-	Log("End", false);
+	Log("End");
 	log_file.close();
 
 	return 0;
