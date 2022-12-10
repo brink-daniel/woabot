@@ -8,19 +8,27 @@
 #include <iomanip>
 #include "xbox360.h"
 
-constexpr int max_power = 100;
-int left_power = max_power;
-int right_power = max_power;
-int power_calibrate = 0;
-int left_power_reduce_by = 0;
-int right_power_reduce_by = 0;
-int forward_power = 0;
-int reverse_power = 0;
-int throttle = 0;
 bool terminate = false;
 bool shutdown = false;
-double max_acceleration = 1;
-double acceleration = 1;
+
+constexpr double max_power = 100;
+constexpr double high_power = 80;
+
+double max_acceleration = 0;
+double half_acceleration = 0;
+
+double left_power = max_power;
+double right_power = max_power;
+double power_calibrate = 0;
+double left_power_reduce_by = 0;
+double right_power_reduce_by = 0;
+double forward_power = 0;
+double reverse_power = 0;
+double throttle = 0;
+double current_acceleration = 0;
+bool boost = false;
+double current_velocity_left = 0;
+double current_velocity_right = 0;
 
 std::ofstream log_file("woabot.log");
 
@@ -36,8 +44,11 @@ void Reset()
 	forward_power = 0;
 	reverse_power = 0;
 	throttle = 0;
-	acceleration = 1;
+	current_acceleration = 0;
 	power_calibrate = 0;
+	current_velocity_left = 0;
+	current_velocity_right = 0;
+	boost = false;
 }
 
 void Log(std::string info, bool error)
@@ -88,17 +99,18 @@ void PowerBalanceCalibrate(signed short value)
 
 	if (value > 0)
 	{
-		//steer more right
-		power_calibrate +=1;
+		// steer more right
+		power_calibrate += 1;
 
 		if (power_calibrate > 10)
 		{
 			power_calibrate = 10;
 		}
 	}
-	else {
-		//steer more left
-		power_calibrate -=1;
+	else
+	{
+		// steer more left
+		power_calibrate -= 1;
 
 		if (power_calibrate < -10)
 		{
@@ -108,13 +120,13 @@ void PowerBalanceCalibrate(signed short value)
 
 	if (power_calibrate > 0)
 	{
-		//steer more right
+		// steer more right
 		left_power_reduce_by = 0;
 		right_power_reduce_by = power_calibrate;
 	}
 	else if (power_calibrate < 0)
 	{
-		//steer more left
+		// steer more left
 		left_power_reduce_by = abs(power_calibrate);
 		right_power_reduce_by = 0;
 	}
@@ -123,7 +135,6 @@ void PowerBalanceCalibrate(signed short value)
 		left_power_reduce_by = 0;
 		right_power_reduce_by = 0;
 	}
-
 }
 
 void PowerBalance(signed short value)
@@ -137,28 +148,14 @@ void PowerBalance(signed short value)
 
 	if (value > 0)
 	{
-		//turn right
+		// turn right
 		left_power = max_power;
-		if (value >= max_power)
-		{
-			right_power = 0 - max_power;
-		}
-		else
-		{
-			right_power = max_power - abs(value);
-		}
+		right_power = max_power - abs(value);
 	}
 	else
 	{
-		//turn left
-		if (abs(value) >= max_power)
-		{
-			left_power = 0 - max_power;
-		}
-		else
-		{
-			left_power = max_power - abs(value);
-		}
+		// turn left
+		left_power = max_power - abs(value);
 		right_power = max_power;
 	}
 }
@@ -200,40 +197,208 @@ double MinMaxVelocity(double value)
 	return value;
 }
 
-void SignalMotor()
+bool SignalMotor()
 {
+	bool success = true;
+
 	double left_velocity = (throttle / max_power) * (left_power / max_power);
 	left_velocity = MinMaxVelocity(left_velocity);
 	if (left_velocity > 0)
-	{	
-		left_velocity -= (left_power_reduce_by/max_power);
+	{
+		left_velocity -= (left_power_reduce_by / max_power);
 	}
 	else if (left_velocity < 0)
 	{
-		left_velocity += (left_power_reduce_by/max_power);
+		left_velocity += (left_power_reduce_by / max_power);
 	}
-	auto res1 = PhidgetDCMotor_setTargetVelocity(motor_left, left_velocity);
-	if (res1 != EPHIDGET_OK)
+	if (current_velocity_left != left_velocity)
 	{
-		Error("Left target velocity not set");
+		auto res1 = PhidgetDCMotor_setTargetVelocity(motor_left, left_velocity);
+		if (res1 != EPHIDGET_OK)
+		{
+			Error("Left target velocity not set");
+			success = false;
+		}
+		else 
+		{
+			current_velocity_left = left_velocity;
+		}
 	}
 
 	double right_velocity = (throttle / max_power) * (right_power / max_power);
 	right_velocity = MinMaxVelocity(right_velocity);
 	if (right_velocity > 0)
-	{	
-		right_velocity -= (right_power_reduce_by/max_power);
+	{
+		right_velocity -= (right_power_reduce_by / max_power);
 	}
 	else if (right_velocity < 0)
 	{
-		right_velocity += (right_power_reduce_by/max_power);
+		right_velocity += (right_power_reduce_by / max_power);
 	}
 
-	auto res2 = PhidgetDCMotor_setTargetVelocity(motor_right, right_velocity);
-	if (res2 != EPHIDGET_OK)
+	if (current_velocity_right != right_velocity)
 	{
-		Error("Right target velocity not set");
+		auto res2 = PhidgetDCMotor_setTargetVelocity(motor_right, right_velocity);
+		if (res2 != EPHIDGET_OK)
+		{
+			Error("Right target velocity not set");
+			success = false;
+		}
+		else 
+		{
+			current_velocity_right = right_velocity;
+		}
 	}
+
+	return success;
+}
+
+bool SetAcceleration(double value)
+{
+	if (current_acceleration == value)
+	{
+		return true;
+	}
+
+	auto res1 = PhidgetDCMotor_setAcceleration(motor_left, value);
+	auto res2 = PhidgetDCMotor_setAcceleration(motor_right, value);
+
+	if (res1 != EPHIDGET_OK || res2 != EPHIDGET_OK)
+	{
+		return false;
+	}
+
+	current_acceleration = value;
+	return true;
+}
+
+void Boost(signed short event_value)
+{
+	if (event_value > 0)
+	{
+		SetAcceleration(max_acceleration);
+		boost = true;
+		return;
+	}
+	SetAcceleration(half_acceleration);
+	boost = false;
+}
+
+void Afterburner(signed short event_value)
+{
+	PowerBalance(0);
+	ThrottleReverse(0);
+	if (event_value > 0)
+	{
+		SetAcceleration(max_acceleration);
+		ThrottleForward(max_power);
+	}
+	else
+	{
+		SetAcceleration(half_acceleration);
+		ThrottleForward(0);
+	}
+}
+
+int DPower(signed short event_value)
+{
+	if (event_value <= 0)
+	{
+		return 0;
+	}
+
+	if (boost)
+	{
+		return max_power;
+	}
+	return high_power;
+}
+
+void DriveForward(signed short event_value)
+{
+	PowerBalance(0);
+	ThrottleReverse(0);
+	ThrottleForward(DPower(event_value));
+}
+
+void DriveBackwards(signed short event_value)
+{
+	PowerBalance(0);
+	ThrottleForward(0);
+	ThrottleReverse(DPower(event_value));
+}
+
+void TurnLeft(signed short event_value)
+{
+	if (event_value>0)
+	{
+		left_power = -max_power;
+		right_power = max_power;
+	}
+	else 
+	{
+		left_power = max_power;
+		right_power = max_power;
+	}
+	ThrottleReverse(0);
+	ThrottleForward(DPower(event_value));
+}
+
+void TurnRight(signed short event_value)
+{
+	if (event_value>0)
+	{
+		left_power = max_power;
+		right_power = -max_power;
+	}
+	else
+	{
+		left_power = max_power;
+		right_power = max_power;
+	}
+	ThrottleReverse(0);
+	ThrottleForward(DPower(event_value));
+}
+
+void ProcessButtonEvent(unsigned char event_number, signed short event_value)
+{
+	auto a = static_cast<button>(event_number);
+	switch (a)
+	{
+	case A:
+		Afterburner(event_value);
+		break;
+	case B:
+		Boost(event_value);
+		break;
+	case X:
+		break;
+	case Y:
+		break;
+	case LeftBumper:
+		break;
+	case RightBumper:
+		break;
+	case Back:
+		Shutdown();
+		break;
+	case Start:
+		Reset();
+		break;
+	case Left:
+		TurnLeft(event_value);
+		break;
+	case Right:
+		TurnRight(event_value);
+		break;
+	case Up:
+		DriveForward(event_value);
+		break;
+	case Down:
+		DriveBackwards(event_value);
+		break;
+	}
+	SignalMotor();
 }
 
 void ProcessAxisEvent(unsigned char event_number, signed short event_value)
@@ -268,60 +433,6 @@ void ProcessAxisEvent(unsigned char event_number, signed short event_value)
 	SignalMotor();
 }
 
-void Afterburner(signed short event_value)
-{
-	PowerBalance(0);
-	ThrottleReverse(0);
-	if (event_value>0)
-	{
-		PhidgetDCMotor_setAcceleration(motor_left, max_acceleration);
-		PhidgetDCMotor_setAcceleration(motor_right, max_acceleration);
-		ThrottleForward(max_power);
-	}
-	else
-	{
-		PhidgetDCMotor_setAcceleration(motor_left, acceleration);
-		PhidgetDCMotor_setAcceleration(motor_right, acceleration);
-		ThrottleForward(0);
-	}
-}
-
-void ProcessButtonEvent(unsigned char event_number, signed short event_value)
-{
-	auto a = static_cast<button>(event_number);
-	switch (a)
-	{
-	case A:
-		Afterburner(event_value);
-		break;
-	case B:
-		break;
-	case X:
-		break;
-	case Y:
-		break;
-	case LeftBumper:
-		break;
-	case RightBumper:
-		break;
-	case Back:
-		Shutdown();
-		break;
-	case Start:
-		Reset();
-		break;
-	case Left:
-		break;
-	case Right:
-		break;
-	case Up:
-		break;
-	case Down:
-		break;
-	}
-	SignalMotor();
-}
-
 int main(int argc, char *argv[])
 {
 	Log("Woabot started");
@@ -351,7 +462,7 @@ int main(int argc, char *argv[])
 		if (res1 != EPHIDGET_OK)
 		{
 			Error("Left motor controller not connected");
-			// std::this_thread::sleep_for(1s);
+			std::this_thread::sleep_for(1s);			
 		}
 	} while (!terminate && res1 != EPHIDGET_OK);
 	Log("Left motor controller connected");
@@ -362,35 +473,12 @@ int main(int argc, char *argv[])
 		if (res2 != EPHIDGET_OK)
 		{
 			Error("Right motor controller not connected");
-			// std::this_thread::sleep_for(1s);
+			std::this_thread::sleep_for(1s);
 		}
 	} while (!terminate && res2 != EPHIDGET_OK);
 	Log("Right motor controller connected");
 
-	do
-	{
-		res1 = PhidgetDCMotor_setAcceleration(motor_left, acceleration);
-		if (res1 != EPHIDGET_OK)
-		{
-			Error("Left motor default acceleration not set");
-			std::this_thread::sleep_for(1s);
-		}
-	} while (!terminate && res1 != EPHIDGET_OK);
-	Log("Left motor default acceleration set");
-
-	do
-	{
-		res2 = PhidgetDCMotor_setAcceleration(motor_right, acceleration);
-		if (res2 != EPHIDGET_OK)
-		{
-			Error("Right motor default acceleration not set");
-			std::this_thread::sleep_for(1s);
-		}
-	} while (!terminate && res2 != EPHIDGET_OK);
-	Log("Right motor default acceleration set");
-
-
-
+	
 	do
 	{
 		res1 = PhidgetDCMotor_getMaxAcceleration(motor_left, &max_acceleration);
@@ -401,7 +489,14 @@ int main(int argc, char *argv[])
 		}
 	} while (!terminate && res1 != EPHIDGET_OK);
 	Log("Max acceleration set");
+	half_acceleration = max_acceleration / 2;
 
+	while (!SetAcceleration(half_acceleration) && !terminate)
+	{
+		Error("Default acceleration not set");
+		std::this_thread::sleep_for(1s);
+	}
+	Log("Default acceleration set");
 
 
 	// init xbox360 controller
