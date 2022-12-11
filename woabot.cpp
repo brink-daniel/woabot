@@ -11,22 +11,24 @@
 bool terminate = false;
 bool shutdown = false;
 
-constexpr double max_power = 100;
-constexpr double high_power = 80;
+constexpr int max_power = 100;
+constexpr int high_power = 80;
 
 double max_acceleration = 0;
-double half_acceleration = 0;
+double low_acceleration = 0;
 
-double left_power = max_power;
-double right_power = max_power;
-double power_calibrate = 0;
-double left_power_reduce_by = 0;
-double right_power_reduce_by = 0;
-double forward_power = 0;
-double reverse_power = 0;
-double throttle = 0;
-double current_acceleration = 0;
+int left_power = max_power;
+int right_power = max_power;
+int power_calibrate = 0;
+int left_power_reduce_by = 0;
+int right_power_reduce_by = 0;
+int forward_power = 0;
+int reverse_power = 0;
+int throttle = 0;
+
 bool boost = false;
+
+double current_acceleration = 0;
 double current_velocity_left = 0;
 double current_velocity_right = 0;
 
@@ -39,16 +41,16 @@ void Reset()
 {
 	left_power = max_power;
 	right_power = max_power;
+	power_calibrate = 0;
 	left_power_reduce_by = 0;
 	right_power_reduce_by = 0;
 	forward_power = 0;
 	reverse_power = 0;
 	throttle = 0;
+	boost = false;
 	current_acceleration = 0;
-	power_calibrate = 0;
 	current_velocity_left = 0;
 	current_velocity_right = 0;
-	boost = false;
 }
 
 void Log(std::string info, bool error)
@@ -150,7 +152,7 @@ void PowerBalance(signed short value)
 	{
 		// turn right
 		left_power = max_power;
-		right_power = max_power - abs(value);
+		right_power = max_power - value;
 	}
 	else
 	{
@@ -197,20 +199,56 @@ double MinMaxVelocity(double value)
 	return value;
 }
 
-bool SignalMotor()
+double ApplyBoost(double velocity)
+{
+	if (!boost || velocity == 0)
+	{
+		return velocity;
+	}
+
+	if (velocity > 0)
+	{
+		if (velocity < max_power)
+		{
+			return 1;
+		}
+	}
+	else
+	{
+		if (velocity > -max_power)
+		{
+			return -1;
+		}
+	} 
+	return velocity;
+}
+
+
+bool SetVelocity()
 {
 	bool success = true;
 
-	double left_velocity = (throttle / max_power) * (left_power / max_power);
+	double d_throttle = throttle;
+	double d_max_power = max_power;
+	double d_left_power = left_power;
+	double d_right_power = right_power;
+	double d_left_power_reduce_by = left_power_reduce_by;
+	double d_right_power_reduce_by = right_power_reduce_by;
+
+
+	double left_velocity = (d_throttle / d_max_power) * (d_left_power / d_max_power);
 	left_velocity = MinMaxVelocity(left_velocity);
 	if (left_velocity > 0)
 	{
-		left_velocity -= (left_power_reduce_by / max_power);
+		left_velocity -= (d_left_power_reduce_by / d_max_power);
 	}
 	else if (left_velocity < 0)
 	{
-		left_velocity += (left_power_reduce_by / max_power);
+		left_velocity += (d_left_power_reduce_by / d_max_power);
 	}
+
+	left_velocity = ApplyBoost(left_velocity);
+	
 	if (current_velocity_left != left_velocity)
 	{
 		auto res1 = PhidgetDCMotor_setTargetVelocity(motor_left, left_velocity);
@@ -225,16 +263,18 @@ bool SignalMotor()
 		}
 	}
 
-	double right_velocity = (throttle / max_power) * (right_power / max_power);
+	double right_velocity = (d_throttle / d_max_power) * (d_right_power / d_max_power);
 	right_velocity = MinMaxVelocity(right_velocity);
 	if (right_velocity > 0)
 	{
-		right_velocity -= (right_power_reduce_by / max_power);
+		right_velocity -= (d_right_power_reduce_by / d_max_power);
 	}
 	else if (right_velocity < 0)
 	{
-		right_velocity += (right_power_reduce_by / max_power);
+		right_velocity += (d_right_power_reduce_by / d_max_power);
 	}
+
+	right_velocity = ApplyBoost(right_velocity);
 
 	if (current_velocity_right != right_velocity)
 	{
@@ -280,7 +320,7 @@ void Boost(signed short event_value)
 		boost = true;
 		return;
 	}
-	SetAcceleration(half_acceleration);
+	SetAcceleration(low_acceleration);
 	boost = false;
 }
 
@@ -295,69 +335,72 @@ void Afterburner(signed short event_value)
 	}
 	else
 	{
-		SetAcceleration(half_acceleration);
+		SetAcceleration(low_acceleration);
 		ThrottleForward(0);
 	}
 }
 
-int DPower(signed short event_value)
-{
-	if (event_value <= 0)
-	{
-		return 0;
-	}
-
-	if (boost)
-	{
-		return max_power;
-	}
-	return high_power;
-}
 
 void DriveForward(signed short event_value)
 {
 	PowerBalance(0);
 	ThrottleReverse(0);
-	ThrottleForward(DPower(event_value));
+	
+	if (event_value > 0)
+	{
+		ThrottleForward(high_power);
+	}
+	else
+	{
+		ThrottleForward(0);
+	}
 }
 
 void DriveBackwards(signed short event_value)
 {
 	PowerBalance(0);
 	ThrottleForward(0);
-	ThrottleReverse(DPower(event_value));
+
+	if (event_value > 0)
+	{
+		ThrottleReverse(high_power);
+	}
+	else
+	{
+		ThrottleReverse(0);
+	}
 }
 
 void TurnLeft(signed short event_value)
 {
-	if (event_value>0)
-	{
-		left_power = -max_power;
-		right_power = max_power;
-	}
-	else 
+	ThrottleReverse(0);
+	if (event_value <= 0)
 	{
 		left_power = max_power;
 		right_power = max_power;
+		ThrottleForward(0);
+		return;
 	}
-	ThrottleReverse(0);
-	ThrottleForward(DPower(event_value));
+	
+	left_power = -max_power;
+	right_power = max_power;
+	ThrottleForward(high_power);
 }
 
 void TurnRight(signed short event_value)
 {
-	if (event_value>0)
-	{
-		left_power = max_power;
-		right_power = -max_power;
-	}
-	else
+	ThrottleReverse(0);
+	if (event_value<=0)
 	{
 		left_power = max_power;
 		right_power = max_power;
+		ThrottleForward(0);
+		return;
 	}
-	ThrottleReverse(0);
-	ThrottleForward(DPower(event_value));
+	
+	left_power = max_power;
+	right_power = -max_power;
+	ThrottleForward(high_power);
 }
 
 void ProcessButtonEvent(unsigned char event_number, signed short event_value)
@@ -398,7 +441,7 @@ void ProcessButtonEvent(unsigned char event_number, signed short event_value)
 		DriveBackwards(event_value);
 		break;
 	}
-	SignalMotor();
+	SetVelocity();
 }
 
 void ProcessAxisEvent(unsigned char event_number, signed short event_value)
@@ -430,7 +473,7 @@ void ProcessAxisEvent(unsigned char event_number, signed short event_value)
 	case DPad_Y:
 		break;
 	}
-	SignalMotor();
+	SetVelocity();
 }
 
 int main(int argc, char *argv[])
@@ -489,9 +532,9 @@ int main(int argc, char *argv[])
 		}
 	} while (!terminate && res1 != EPHIDGET_OK);
 	Log("Max acceleration set");
-	half_acceleration = max_acceleration / 2;
+	low_acceleration = max_acceleration / 3;
 
-	while (!SetAcceleration(half_acceleration) && !terminate)
+	while (!SetAcceleration(low_acceleration) && !terminate)
 	{
 		Error("Default acceleration not set");
 		std::this_thread::sleep_for(1s);
