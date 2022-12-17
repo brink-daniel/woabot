@@ -1,3 +1,5 @@
+sudo app install gdb
+
 sudo su
 curl -fsSL https://www.phidgets.com/downloads/setup_linux | bash -
 
@@ -6,6 +8,7 @@ sudo apt install libphidget22-dev
 sudo apt install libphidget22extra
 sudo apt install phidget22networkserver
 sudo apt install phidget22admin
+
 
 scp /home/daniel/Documents/Woabot/woabot.cpp daniel@robot.local:/home/daniel/Documents/Woabot/woabot.cpp
 scp /home/daniel/Documents/Woabot/xbox360.h daniel@robot.local:/home/daniel/Documents/Woabot/xbox360.h
