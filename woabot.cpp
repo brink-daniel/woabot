@@ -345,7 +345,7 @@ void DriveForward(signed short event_value)
 {
 	PowerBalance(0);
 	ThrottleReverse(0);
-	
+		
 	if (event_value > 0)
 	{
 		ThrottleForward(high_power);
@@ -374,6 +374,7 @@ void DriveBackwards(signed short event_value)
 void TurnLeft(signed short event_value)
 {
 	ThrottleReverse(0);
+	
 	if (event_value <= 0)
 	{
 		left_power = max_power;
@@ -390,10 +391,10 @@ void TurnLeft(signed short event_value)
 void TurnRight(signed short event_value)
 {
 	ThrottleReverse(0);
+	
 	if (event_value<=0)
 	{
-		left_power = max_power;
-		right_power = max_power;
+		PowerBalance(0);
 		ThrottleForward(0);
 		return;
 	}
