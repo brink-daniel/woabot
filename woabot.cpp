@@ -4,6 +4,7 @@
 #include <chrono>
 #include <thread>
 #include "xbox360.h"
+#include <cmath>
 
 using namespace std::chrono_literals;
 
@@ -17,6 +18,8 @@ double current_velocity_right = 0;
 
 PhidgetDCMotorHandle motor_left;
 PhidgetDCMotorHandle motor_right;
+
+bool terminate = false;
 
 void PowerBalance(signed short value)
 {
@@ -64,6 +67,14 @@ double MinMaxVelocity(double value)
 	return value;
 }
 
+double StepVelocity(double value)
+{
+	value = value * 10;
+	value = round(value);
+	value = value / 10;
+	return value;
+}
+
 void SetVelocity()
 {	
 	double d_throttle = forward_power - reverse_power;
@@ -72,44 +83,51 @@ void SetVelocity()
 	double d_right_power = right_power;	
 
 	double left_velocity = (d_throttle / d_max_power) * (d_left_power / d_max_power);
-	left_velocity = MinMaxVelocity(left_velocity);		
-	if (current_velocity_left != left_velocity)
+	left_velocity = MinMaxVelocity(left_velocity);
+	left_velocity = StepVelocity(left_velocity);
+	if (left_velocity == -0)
 	{
-		current_velocity_left = left_velocity;
-		try 
-		{
-			PhidgetReturnCode res1 = PhidgetDCMotor_setTargetVelocity(motor_left, left_velocity);
-			if (res1 != EPHIDGET_OK)
-			{
-				std::cout << "Failed to set left motor velocity" << std::endl;
-			}
-		}
-		catch (...)
-		{
-			std::cout << "Exception setting left motor velocity" << std::endl;
-		}
+		left_velocity = 0;
 	}
+
 
 	double right_velocity = (d_throttle / d_max_power) * (d_right_power / d_max_power);
-	right_velocity = MinMaxVelocity(right_velocity);	
-	if (current_velocity_right != right_velocity)
+	right_velocity = MinMaxVelocity(right_velocity);
+	right_velocity = StepVelocity(right_velocity);
+	if (right_velocity == -0)
 	{
-		current_velocity_right = right_velocity;
-		try 
-		{
-			PhidgetReturnCode res2 = PhidgetDCMotor_setTargetVelocity(motor_right, right_velocity);
-			if (res2 != EPHIDGET_OK)
-			{
-				std::cout << "Failed to set right motor velocity" << std::endl;
-			}
-		}
-		catch (...)
-		{
-			std::cout << "Exception setting right motor velocity" << std::endl;
-		}
+		right_velocity = 0;
 	}
 
-	std::cout << "Left: " << current_velocity_left << " Right: " << current_velocity_right << std::endl;
+	if ((current_velocity_left != left_velocity)
+		|| (current_velocity_right != right_velocity))
+	{		
+		PhidgetReturnCode res3;
+		PhidgetReturnCode res4;
+		do 
+		{
+			if (current_velocity_left != left_velocity)
+			{
+				res3 = PhidgetDCMotor_setTargetVelocity(motor_left, left_velocity);
+				if (res3 == EPHIDGET_OK)
+				{
+					current_velocity_left = left_velocity;
+				}
+			}
+
+			if (current_velocity_right != right_velocity)
+			{
+				res4 = PhidgetDCMotor_setTargetVelocity(motor_right, right_velocity);
+				if (res4 == EPHIDGET_OK)
+				{
+					current_velocity_right = right_velocity;
+				}
+			}
+
+		} while (res3 != EPHIDGET_OK || res4 != EPHIDGET_OK);
+
+		//std::cout << "Left: " << current_velocity_left << " Right: " << current_velocity_right << std::endl;	
+	}
 }
 
 void ProcessButtonEvent(unsigned char event_number, signed short event_value)
@@ -122,6 +140,7 @@ void ProcessButtonEvent(unsigned char event_number, signed short event_value)
 	case B:
 		break;
 	case X:
+		terminate = true;
 		break;
 	case Y:
 		break;
@@ -179,7 +198,6 @@ void ProcessAxisEvent(unsigned char event_number, signed short event_value)
 int main(int argc, char *argv[])
 {	
 	std::cout << "Woabot" << std::endl;
-
 	
 	int js = -1;	
 	do
@@ -192,12 +210,10 @@ int main(int argc, char *argv[])
 		}
 	} while (js == -1);
 
-
-
 	PhidgetDCMotor_create(&motor_left);
 	PhidgetDCMotor_create(&motor_right);
 	Phidget_setChannel((PhidgetHandle)motor_left, 0);
-	Phidget_setChannel((PhidgetHandle)motor_right, 1);	
+	Phidget_setChannel((PhidgetHandle)motor_right, 1);
 	
 	PhidgetReturnCode res1;
 	do
@@ -208,8 +224,7 @@ int main(int argc, char *argv[])
 			std::cout << "Waiting for left motor..." << std::endl;	
 			std::this_thread::sleep_for(1s);			
 		}
-	} while (res1 != EPHIDGET_OK);
-	
+	} while (res1 != EPHIDGET_OK);	
 
 	PhidgetReturnCode res2;
 	do
@@ -220,18 +235,20 @@ int main(int argc, char *argv[])
 			std::cout << "Waiting for right motor..." << std::endl;		
 			std::this_thread::sleep_for(1s);
 		}
-	} while (res2 != EPHIDGET_OK);	
+	} while (res2 != EPHIDGET_OK);
 
-
-	PhidgetDCMotor_setAcceleration(motor_left, 20);
-	PhidgetDCMotor_setAcceleration(motor_right, 20);
-
-
-	std::cout << "Ready!" << std::endl;	
+	double maxAcceleration_left;
+	PhidgetDCMotor_getMaxAcceleration(motor_left, &maxAcceleration_left);
+	PhidgetDCMotor_setAcceleration(motor_left, maxAcceleration_left);
 	
+	double maxAcceleration_right;
+	PhidgetDCMotor_getMaxAcceleration(motor_right, &maxAcceleration_right);
+	PhidgetDCMotor_setAcceleration(motor_right, maxAcceleration_right);
+
+	std::cout << "Ready!" << std::endl;		
 
 	struct js_event event;
-	while (read_event(js, &event) == 0)
+	while (read_event(js, &event) == 0 && !terminate)
 	{
 		switch (event.type)
 		{
@@ -244,7 +261,12 @@ int main(int argc, char *argv[])
 		default:
 			break;
 		}
-	}	
+	}
+
+	PhidgetDCMotor_delete(&motor_left);
+	PhidgetDCMotor_delete(&motor_right);
+
+	std::cout << "Exit" << std::endl;		
 
 	return 0;
 }
