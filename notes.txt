@@ -17,3 +17,4 @@ g++ woabot.cpp -o woabot -lphidget22
 sudo systemctl daemon-reload
 sudo systemctl enable woabot.service
 sudo systemctl start woabot.service
+sudo systemctl status woabot.service
