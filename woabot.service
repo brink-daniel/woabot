@@ -3,7 +3,7 @@ Description=Woabot
 After=multi-user.target
 
 [Service]
-ExecStart=/home/daniel/Documents/Woabot/woabot
+ExecStart=/home/daniel/woabot/woabot
 
 [Install]
 WantedBy=multi-user.target

@@ -1,18 +1,22 @@
-sudo apt install gdb
 
-sudo su
-curl -fsSL https://www.phidgets.com/downloads/setup_linux | bash -
+#sudo su
+#curl -fsSL https://www.phidgets.com/downloads/setup_linux | bash -
+#sudo apt install libphidget22-dev
 
-sudo apt install libphidget22
-sudo apt install libphidget22-dev
-sudo apt install phidget22admin
+sudo apt install libusb-1.0-0-dev
 
+tar -xf libphidget22-1.9.20220112.tar.gz
+./configure
+make
+make install
 
-scp /home/daniel/Documents/Woabot/woabot.cpp daniel@robot.local:/home/daniel/Documents/Woabot/woabot.cpp
-scp /home/daniel/Documents/Woabot/xbox360.h daniel@robot.local:/home/daniel/Documents/Woabot/xbox360.h
-scp /home/daniel/Documents/Woabot/woabot.service daniel@robot.local:/lib/systemd/system/woabot.service
+scp woabot.cpp daniel@robot.local:/home/daniel/woabot/woabot.cpp
+scp xbox360.h daniel@robot.local:/home/daniel/woabot/xbox360.h
+scp woabot.service daniel@robot.local:/etc/systemd/system/woabot.service
 
-g++ woabot.cpp -o woabot -lphidget22
+g++ woabot.cpp -o woabot -lphidget22 -lpthread -latomic
+
+sudo ./woabot
 
 sudo systemctl daemon-reload
 sudo systemctl enable woabot.service

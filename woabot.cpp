@@ -1,10 +1,13 @@
-#include <fcntl.h>
-#include <phidget22.h>
-#include <iostream>
+#include <atomic>
 #include <chrono>
-#include <thread>
-#include "xbox360.h"
 #include <cmath>
+#include <fcntl.h>
+#include <iostream>
+#include <thread>
+
+#include <phidget22.h>
+
+#include "xbox360.h"
 
 using namespace std::chrono_literals;
 
@@ -13,13 +16,10 @@ int right_power = 100;
 int forward_power = 0;
 int reverse_power = 0;
 
-double current_velocity_left = 0;
-double current_velocity_right = 0;
-
-PhidgetDCMotorHandle motor_left;
-PhidgetDCMotorHandle motor_right;
-
-bool terminate = false;
+std::atomic<bool> request_terminate(false);
+std::atomic<bool> request_debug(false);
+std::atomic<double> request_velocity_left (0);
+std::atomic<double> request_velocity_right (0);
 
 void PowerBalance(signed short value)
 {
@@ -44,16 +44,6 @@ void PowerBalance(signed short value)
 	}
 }
 
-void ThrottleForward(signed short value)
-{
-	forward_power = value;
-}
-
-void ThrottleReverse(signed short value)
-{
-	reverse_power = value;
-}
-
 double MinMaxVelocity(double value)
 {
 	if (value > 1)
@@ -70,12 +60,12 @@ double MinMaxVelocity(double value)
 double StepVelocity(double value)
 {
 	value = value * 10;
-	value = round(value);
+	value = std::round(value);
 	value = value / 10;
 	return value;
 }
 
-void SetVelocity()
+void RequestVelocityUpdate()
 {	
 	double d_throttle = forward_power - reverse_power;
 	double d_max_power = 100;
@@ -89,8 +79,7 @@ void SetVelocity()
 	{
 		left_velocity = 0;
 	}
-
-
+	
 	double right_velocity = (d_throttle / d_max_power) * (d_right_power / d_max_power);
 	right_velocity = MinMaxVelocity(right_velocity);
 	right_velocity = StepVelocity(right_velocity);
@@ -99,34 +88,14 @@ void SetVelocity()
 		right_velocity = 0;
 	}
 
-	if ((current_velocity_left != left_velocity)
-		|| (current_velocity_right != right_velocity))
-	{		
-		PhidgetReturnCode res3;
-		PhidgetReturnCode res4;
-		do 
-		{
-			if (current_velocity_left != left_velocity)
-			{
-				res3 = PhidgetDCMotor_setTargetVelocity(motor_left, left_velocity);
-				if (res3 == EPHIDGET_OK)
-				{
-					current_velocity_left = left_velocity;
-				}
-			}
+	if (request_velocity_left != left_velocity)
+	{
+		request_velocity_left = left_velocity;
+	}
 
-			if (current_velocity_right != right_velocity)
-			{
-				res4 = PhidgetDCMotor_setTargetVelocity(motor_right, right_velocity);
-				if (res4 == EPHIDGET_OK)
-				{
-					current_velocity_right = right_velocity;
-				}
-			}
-
-		} while (res3 != EPHIDGET_OK || res4 != EPHIDGET_OK);
-
-		//std::cout << "Left: " << current_velocity_left << " Right: " << current_velocity_right << std::endl;	
+	if (request_velocity_right != right_velocity)
+	{
+		request_velocity_right = right_velocity;
 	}
 }
 
@@ -140,9 +109,22 @@ void ProcessButtonEvent(unsigned char event_number, signed short event_value)
 	case B:
 		break;
 	case X:
-		terminate = true;
+		std::cout << "Terminate requested" << std::endl;
+		request_terminate = true;
 		break;
 	case Y:
+		if (event_value == 1)
+		{
+			request_debug = !request_debug;
+			if (request_debug)
+			{
+				std::cout << "Debug output enabled" << std::endl;
+			}
+			else
+			{
+				std::cout << "Debug output disabled" << std::endl;
+			}
+		}
 		break;
 	case LeftBumper:
 		break;
@@ -161,14 +143,14 @@ void ProcessButtonEvent(unsigned char event_number, signed short event_value)
 	case Down:
 		break;
 	}
-	SetVelocity();
+	RequestVelocityUpdate();
 }
 
 void ProcessAxisEvent(unsigned char event_number, signed short event_value)
 {
-	auto a = static_cast<axis>(event_number);
-	auto v = axis_value(a, event_value);
-	auto p = axis_deadzone_filter(a, v);
+	axis a = static_cast<axis>(event_number);
+	int v = axis_value(a, event_value);
+	int p = axis_deadzone_filter(a, v);
 
 	switch (a)
 	{
@@ -178,10 +160,10 @@ void ProcessAxisEvent(unsigned char event_number, signed short event_value)
 	case LeftStick_Y:
 		break;
 	case RightTrigger:
-		ThrottleForward(p);
+		forward_power = p;
 		break;
 	case LeftTrigger:
-		ThrottleReverse(p);
+		reverse_power = p;
 		break;
 	case RightStick_X:
 		break;
@@ -192,8 +174,10 @@ void ProcessAxisEvent(unsigned char event_number, signed short event_value)
 	case DPad_Y:
 		break;
 	}
-	SetVelocity();
+	RequestVelocityUpdate();
 }
+
+
 
 int main(int argc, char *argv[])
 {	
@@ -202,53 +186,116 @@ int main(int argc, char *argv[])
 	int js = -1;	
 	do
 	{
+		std::cout << "Waiting for controller..." << std::endl;
 		js = open("/dev/input/js0", O_RDONLY);
 		if (js == -1)
 		{			
-			std::cout << "Waiting for controller..." << std::endl;
 			std::this_thread::sleep_for(1s);
 		}
 	} while (js == -1);
 
-	PhidgetDCMotor_create(&motor_left);
-	PhidgetDCMotor_create(&motor_right);
-	Phidget_setChannel((PhidgetHandle)motor_left, 0);
-	Phidget_setChannel((PhidgetHandle)motor_right, 1);
-	
-	PhidgetReturnCode res1;
-	do
-	{
-		res1 = Phidget_openWaitForAttachment((PhidgetHandle)motor_left, 5000);
-		if (res1 != EPHIDGET_OK)
-		{		
-			std::cout << "Waiting for left motor..." << std::endl;	
-			std::this_thread::sleep_for(1s);			
+
+	std::thread motor_control_thread = std::thread([] {
+
+		double current_velocity_left = 0;
+		double current_velocity_right = 0;
+
+		PhidgetDCMotorHandle motor_left;
+		PhidgetDCMotorHandle motor_right;
+
+		PhidgetDCMotor_create(&motor_left);
+		PhidgetDCMotor_create(&motor_right);
+
+		Phidget_setChannel((PhidgetHandle)motor_left, 0);
+		Phidget_setChannel((PhidgetHandle)motor_right, 1);
+				
+		PhidgetReturnCode res1;
+		do
+		{
+			std::cout << "Waiting for Left Motor..." << std::endl;
+			res1 = Phidget_openWaitForAttachment((PhidgetHandle)motor_left, 5000);
+			if (res1 != EPHIDGET_OK)
+			{
+				std::this_thread::sleep_for(1s);
+			}
+		} while (res1 != EPHIDGET_OK && !request_terminate);
+
+		PhidgetReturnCode res2;
+		do
+		{
+			std::cout << "Waiting for Right Motor..." << std::endl;
+			res2 = Phidget_openWaitForAttachment((PhidgetHandle)motor_right, 5000);
+			if (res2 != EPHIDGET_OK)
+			{				
+				std::this_thread::sleep_for(1s);
+			}
+		} while (res2 != EPHIDGET_OK && !request_terminate);
+
+		PhidgetDCMotor_setTargetVelocity(motor_left, 0);
+		PhidgetDCMotor_setTargetVelocity(motor_right, 0);
+
+		double maxAcceleration_left;
+		PhidgetDCMotor_getMaxAcceleration(motor_left, &maxAcceleration_left);
+		PhidgetDCMotor_setAcceleration(motor_left, maxAcceleration_left);
+
+		double maxAcceleration_right;
+		PhidgetDCMotor_getMaxAcceleration(motor_right, &maxAcceleration_right);
+		PhidgetDCMotor_setAcceleration(motor_right, maxAcceleration_right);
+
+		std::cout << "Ready!" << std::endl;
+
+		while (!request_terminate)
+		{
+			double r_velocity_left = request_velocity_left;
+			double r_velocity_right = request_velocity_right;
+			
+			if ((current_velocity_left != r_velocity_left)
+				|| (current_velocity_right != r_velocity_right))
+			{
+				PhidgetReturnCode res_left;
+				PhidgetReturnCode res_right;
+
+				do
+				{
+					if (current_velocity_left != r_velocity_left)
+					{
+						res_left = PhidgetDCMotor_setTargetVelocity(motor_left, r_velocity_left);
+						if (res_left == EPHIDGET_OK)
+						{
+							current_velocity_left = r_velocity_left;
+						}
+					}
+
+					if (current_velocity_right != r_velocity_right)
+					{
+						res_right = PhidgetDCMotor_setTargetVelocity(motor_right, r_velocity_right);
+						if (res_right == EPHIDGET_OK)
+						{
+							current_velocity_right = r_velocity_right;
+						}
+					}
+
+				} while ((res_left != EPHIDGET_OK || res_right != EPHIDGET_OK) && !request_terminate);
+
+				if (request_debug)
+				{
+					std::cout << "Left: " << current_velocity_left << " Right: " << current_velocity_right << std::endl;
+				}
+			}
+
+			std::this_thread::sleep_for(10ms);
 		}
-	} while (res1 != EPHIDGET_OK);	
 
-	PhidgetReturnCode res2;
-	do
-	{
-		res2 = Phidget_openWaitForAttachment((PhidgetHandle)motor_right, 5000);
-		if (res2 != EPHIDGET_OK)
-		{		
-			std::cout << "Waiting for right motor..." << std::endl;		
-			std::this_thread::sleep_for(1s);
-		}
-	} while (res2 != EPHIDGET_OK);
+		PhidgetDCMotor_setTargetVelocity(motor_left, 0);
+		PhidgetDCMotor_setTargetVelocity(motor_right, 0);
 
-	double maxAcceleration_left;
-	PhidgetDCMotor_getMaxAcceleration(motor_left, &maxAcceleration_left);
-	PhidgetDCMotor_setAcceleration(motor_left, maxAcceleration_left);
-	
-	double maxAcceleration_right;
-	PhidgetDCMotor_getMaxAcceleration(motor_right, &maxAcceleration_right);
-	PhidgetDCMotor_setAcceleration(motor_right, maxAcceleration_right);
+		PhidgetDCMotor_delete(&motor_left);
+		PhidgetDCMotor_delete(&motor_right);
 
-	std::cout << "Ready!" << std::endl;		
+	});		
 
 	struct js_event event;
-	while (read_event(js, &event) == 0 && !terminate)
+	while (read_event(js, &event) == 0 && !request_terminate)
 	{
 		switch (event.type)
 		{
@@ -261,12 +308,9 @@ int main(int argc, char *argv[])
 		default:
 			break;
 		}
-	}
+	}	
 
-	PhidgetDCMotor_delete(&motor_left);
-	PhidgetDCMotor_delete(&motor_right);
-
-	std::cout << "Exit" << std::endl;		
-
+	motor_control_thread.join();
+	std::cout << "Exit" << std::endl;
 	return 0;
 }
