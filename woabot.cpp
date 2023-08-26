@@ -15,6 +15,7 @@ int left_power = 100;
 int right_power = 100;
 int forward_power = 0;
 int reverse_power = 0;
+int power_calibrate = 0;
 
 std::atomic<bool> request_terminate(false);
 std::atomic<bool> request_debug(false);
@@ -44,6 +45,35 @@ void PowerBalance(signed short value)
 	}
 }
 
+void PowerBalanceCalibrate(signed short value)
+{
+	if (abs(value) != 100)
+	{
+		return;
+	}
+
+	if (value > 0)
+	{
+		// steer more right
+		power_calibrate += 1;
+
+		if (power_calibrate > 50)
+		{
+			power_calibrate = 50;
+		}
+	}
+	else
+	{
+		// steer more left
+		power_calibrate -= 1;
+
+		if (power_calibrate < -50)
+		{
+			power_calibrate = -50;
+		}
+	}
+}
+
 double MinMaxVelocity(double value)
 {
 	if (value > 1)
@@ -67,10 +97,32 @@ double StepVelocity(double value)
 
 void RequestVelocityUpdate()
 {	
-	double d_throttle = reverse_power - forward_power;
+	double d_throttle = forward_power - reverse_power;
 	double d_max_power = 100;
 	double d_left_power = left_power;
-	double d_right_power = right_power;	
+	double d_right_power = right_power;
+	double d_left_power_reduce_by = 0;
+	double d_right_power_reduce_by = 0;
+
+
+	if (power_calibrate > 0)
+	{
+		// steer more right
+		d_left_power_reduce_by = 0;
+		d_right_power_reduce_by = power_calibrate;
+	}
+	else if (power_calibrate < 0)
+	{
+		// steer more left
+		d_left_power_reduce_by = abs(power_calibrate);
+		d_right_power_reduce_by = 0;
+	}
+	else
+	{
+		d_left_power_reduce_by = 0;
+		d_right_power_reduce_by = 0;
+	}
+
 
 	double left_velocity = (d_throttle / d_max_power) * (d_left_power / d_max_power);
 	left_velocity = MinMaxVelocity(left_velocity);
@@ -79,6 +131,17 @@ void RequestVelocityUpdate()
 	{
 		left_velocity = 0;
 	}
+
+	if (left_velocity > 0)
+	{
+		left_velocity -= (d_left_power_reduce_by / d_max_power);
+	}
+	else if (left_velocity < 0)
+	{
+		left_velocity += (d_left_power_reduce_by / d_max_power);
+	}
+
+
 	
 	double right_velocity = (d_throttle / d_max_power) * (d_right_power / d_max_power);
 	right_velocity = MinMaxVelocity(right_velocity);
@@ -87,6 +150,17 @@ void RequestVelocityUpdate()
 	{
 		right_velocity = 0;
 	}
+
+	if (right_velocity > 0)
+	{
+		right_velocity -= (d_right_power_reduce_by / d_max_power);
+	}
+	else if (right_velocity < 0)
+	{
+		right_velocity += (d_right_power_reduce_by / d_max_power);
+	}
+
+
 
 	if (request_velocity_left != left_velocity)
 	{
@@ -107,13 +181,19 @@ void ProcessButtonEvent(unsigned char event_number, signed short event_value)
 	case A:
 		break;
 	case B:
+		if (event_value == 1)
+		{
+			power_calibrate = 0;
+		}
 		break;
 	case X:
-		std::cout << "Terminate requested" << std::endl;
-		request_terminate = true;
+		if (event_value == 1)
+		{
+			std::cout << "Terminate requested" << std::endl;
+			request_terminate = true;
+		}
 		break;
 	case Y:
-		/*
 		if (event_value == 1)
 		{
 			request_debug = !request_debug;
@@ -126,7 +206,6 @@ void ProcessButtonEvent(unsigned char event_number, signed short event_value)
 				std::cout << "Debug output disabled" << std::endl;
 			}
 		}
-		*/
 		break;
 	case LeftBumper:
 		break;
@@ -168,6 +247,7 @@ void ProcessAxisEvent(unsigned char event_number, signed short event_value)
 		reverse_power = p;
 		break;
 	case RightStick_X:
+		PowerBalanceCalibrate(p);
 		break;
 	case RightStick_Y:
 		break;
@@ -238,10 +318,12 @@ int main(int argc, char *argv[])
 
 		double maxAcceleration_left;
 		PhidgetDCMotor_getMaxAcceleration(motor_left, &maxAcceleration_left);
+		maxAcceleration_left = maxAcceleration_left * 0.75;
 		PhidgetDCMotor_setAcceleration(motor_left, maxAcceleration_left);
 
 		double maxAcceleration_right;
 		PhidgetDCMotor_getMaxAcceleration(motor_right, &maxAcceleration_right);
+		maxAcceleration_right = maxAcceleration_right * 0.75;
 		PhidgetDCMotor_setAcceleration(motor_right, maxAcceleration_right);
 
 		std::cout << "Ready!" << std::endl;
