@@ -67,7 +67,7 @@ double StepVelocity(double value)
 
 void RequestVelocityUpdate()
 {	
-	double d_throttle = forward_power - reverse_power;
+	double d_throttle = reverse_power - forward_power;
 	double d_max_power = 100;
 	double d_left_power = left_power;
 	double d_right_power = right_power;	
@@ -113,6 +113,7 @@ void ProcessButtonEvent(unsigned char event_number, signed short event_value)
 		request_terminate = true;
 		break;
 	case Y:
+		/*
 		if (event_value == 1)
 		{
 			request_debug = !request_debug;
@@ -125,6 +126,7 @@ void ProcessButtonEvent(unsigned char event_number, signed short event_value)
 				std::cout << "Debug output disabled" << std::endl;
 			}
 		}
+		*/
 		break;
 	case LeftBumper:
 		break;
