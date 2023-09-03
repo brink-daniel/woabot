@@ -72,6 +72,11 @@ void PowerBalanceCalibrate(signed short value)
 			power_calibrate = -50;
 		}
 	}
+
+	if (request_debug)
+	{
+		std::cout << "Calibrate: " << power_calibrate << std::endl;
+	}
 }
 
 double MinMaxVelocity(double value)
@@ -318,12 +323,12 @@ int main(int argc, char *argv[])
 
 		double maxAcceleration_left;
 		PhidgetDCMotor_getMaxAcceleration(motor_left, &maxAcceleration_left);
-		maxAcceleration_left = maxAcceleration_left * 0.75;
+		maxAcceleration_left = maxAcceleration_left * 0.5;
 		PhidgetDCMotor_setAcceleration(motor_left, maxAcceleration_left);
 
 		double maxAcceleration_right;
 		PhidgetDCMotor_getMaxAcceleration(motor_right, &maxAcceleration_right);
-		maxAcceleration_right = maxAcceleration_right * 0.75;
+		maxAcceleration_right = maxAcceleration_right * 0.5;
 		PhidgetDCMotor_setAcceleration(motor_right, maxAcceleration_right);
 
 		std::cout << "Ready!" << std::endl;
